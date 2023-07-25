@@ -49,6 +49,7 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
+import net.unethicalite.api.commons.Rand;
 import net.unethicalite.api.commons.Time;
 import net.unethicalite.api.entities.Players;
 import net.unethicalite.api.game.Skills;
@@ -158,7 +159,8 @@ public class FightCavePlugin extends Plugin
 	{
 		return configManager.getConfig(FightCaveConfig.class);
 	}
-
+	@Inject
+	FightCaveConfig config;
 	@Override
 	public void startUp()
 	{
@@ -336,11 +338,11 @@ public class FightCavePlugin extends Plugin
 						}
 						break;
 				}
-			}
 
-			Collections.sort(mageTicks);
-			Collections.sort(rangedTicks);
-			Collections.sort(meleeTicks);
+				Collections.sort(mageTicks);
+				Collections.sort(rangedTicks);
+				Collections.sort(meleeTicks);
+			}
 		}
 		if (!mageTicks.isEmpty() && mageTicks.get(0) == 1 && !Prayers.isEnabled(Prayer.PROTECT_FROM_MAGIC)) {
 			shortSleep();
@@ -355,19 +357,22 @@ public class FightCavePlugin extends Plugin
 			Prayers.toggle(Prayer.PROTECT_FROM_MELEE);
 			shortSleep();
 		}
+
 		//idea here is to flick off prayers when not needed, conserving points / pots
-		else if (Prayers.isEnabled(Prayer.PROTECT_FROM_MELEE)) {
-			shortSleep();
-			Prayers.toggle(Prayer.PROTECT_FROM_MELEE);
-			shortSleep();
-		} else if (Prayers.isEnabled(Prayer.PROTECT_FROM_MISSILES)) {
-			shortSleep();
-			Prayers.toggle(Prayer.PROTECT_FROM_MISSILES);
-			shortSleep();
-		} else if (Prayers.isEnabled(Prayer.PROTECT_FROM_MAGIC)) {
-			shortSleep();
-			Prayers.toggle(Prayer.PROTECT_FROM_MAGIC);
-			shortSleep();
+		else if (config.flick()) {
+			if (Prayers.isEnabled(Prayer.PROTECT_FROM_MELEE)) {
+				shortSleep();
+				Prayers.toggle(Prayer.PROTECT_FROM_MELEE);
+				shortSleep();
+			} else if (Prayers.isEnabled(Prayer.PROTECT_FROM_MISSILES)) {
+				shortSleep();
+				Prayers.toggle(Prayer.PROTECT_FROM_MISSILES);
+				shortSleep();
+			} else if (Prayers.isEnabled(Prayer.PROTECT_FROM_MAGIC)) {
+				shortSleep();
+				Prayers.toggle(Prayer.PROTECT_FROM_MAGIC);
+				shortSleep();
+			}
 		}
 		if (Skills.getBoostedLevel(Skill.HITPOINTS) <= 90 && drinkTickTimeout < 0) {
 			Item saraBrew = Inventory.getFirst(ItemID.SARADOMIN_BREW1,ItemID.SARADOMIN_BREW2,ItemID.SARADOMIN_BREW3,ItemID.SARADOMIN_BREW4);
@@ -375,15 +380,13 @@ public class FightCavePlugin extends Plugin
 				saraBrew.interact("Drink");
 				drinkTickTimeout = 3;
 			}
-		}
-		if ((Skills.getBoostedLevel(Skill.RANGED) <= 70 || Skills.getBoostedLevel(Skill.PRAYER) < 33) && drinkTickTimeout < 0) {
+		} else if ((Skills.getBoostedLevel(Skill.RANGED) <= 70 || Skills.getBoostedLevel(Skill.PRAYER) < 33) && drinkTickTimeout < 0) {
 			Item superRestore = Inventory.getFirst(ItemID.SUPER_RESTORE1,ItemID.SUPER_RESTORE2,ItemID.SUPER_RESTORE3,ItemID.SUPER_RESTORE4);
 			if (superRestore != null) {
 				superRestore.interact("Drink");
 				drinkTickTimeout = 3;
 			}
-		}
-		if (Skills.getBoostedLevel(Skill.RANGED) > 98 && Skills.getBoostedLevel(Skill.RANGED) < 100) {
+		} else if (Skills.getBoostedLevel(Skill.RANGED) < 100) {
 			Item superRanging = Inventory.getFirst(ItemID.SUPER_RANGING_1,ItemID.SUPER_RANGING_2,ItemID.SUPER_RANGING_3,ItemID.SUPER_RANGING_4);
 			if (superRanging != null) {
 				superRanging.interact("Drink");

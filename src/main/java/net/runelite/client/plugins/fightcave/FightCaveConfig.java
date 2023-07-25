@@ -37,16 +37,24 @@ import net.runelite.client.config.Units;
 @ConfigGroup("fightcave")
 public interface FightCaveConfig extends Config
 {
+	@ConfigItem(
+			position = 0,
+			keyName = "flick",
+			name = "Flick Prayers",
+			description = "The prayers will be flicked, otherwise leaves last prayer on",
+			section = text
+	)
+	default boolean flick() { return false; }
 	@ConfigSection(
 		keyName = "text",
-		position = 0,
+		position = 1,
 		name = "Text",
 		description = ""
 	)
 	String text = "Text";
 
 	@ConfigItem(
-		position = 1,
+		position = 2,
 		keyName = "fontStyle",
 		name = "Font Style",
 		description = "Plain | Bold | Italics",
@@ -62,7 +70,7 @@ public interface FightCaveConfig extends Config
 		max = 40
 	)
 	@ConfigItem(
-		position = 2,
+		position = 3,
 		keyName = "textSize",
 		name = "Text Size",
 		description = "Text Size for Timers.",
@@ -75,7 +83,7 @@ public interface FightCaveConfig extends Config
 	}
 
 	@ConfigItem(
-		position = 3,
+		position = 4,
 		keyName = "shadows",
 		name = "Shadows",
 		description = "Adds Shadows to text.",
