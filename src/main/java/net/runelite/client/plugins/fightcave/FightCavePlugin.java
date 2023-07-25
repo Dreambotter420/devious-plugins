@@ -304,12 +304,27 @@ public class FightCavePlugin extends Plugin
 					{
 						case TZTOK_JAD_RANGE_ATTACK:
 							npc.setAttackStyle(FightCaveContainer.AttackStyle.RANGE);
+							if (!Prayers.isEnabled(Prayer.PROTECT_FROM_MISSILES)) {
+								shortSleep();
+								Prayers.toggle(Prayer.PROTECT_FROM_MISSILES);
+								shortSleep();
+							}
 							break;
 						case TZTOK_JAD_MAGIC_ATTACK:
 							npc.setAttackStyle(FightCaveContainer.AttackStyle.MAGE);
+							if (!Prayers.isEnabled(Prayer.PROTECT_FROM_MAGIC)) {
+								shortSleep();
+								Prayers.toggle(Prayer.PROTECT_FROM_MAGIC);
+								shortSleep();
+							}
 							break;
 						case TZTOK_JAD_MELEE_ATTACK:
 							npc.setAttackStyle(FightCaveContainer.AttackStyle.MELEE);
+							if (!Prayers.isEnabled(Prayer.PROTECT_FROM_MELEE)) {
+								shortSleep();
+								Prayers.toggle(Prayer.PROTECT_FROM_MELEE);
+								shortSleep();
+							}
 							break;
 					}
 				}
@@ -344,18 +359,24 @@ public class FightCavePlugin extends Plugin
 				Collections.sort(meleeTicks);
 			}
 		}
-		if (!mageTicks.isEmpty() && mageTicks.get(0) == 1 && !Prayers.isEnabled(Prayer.PROTECT_FROM_MAGIC)) {
-			shortSleep();
-			Prayers.toggle(Prayer.PROTECT_FROM_MAGIC);
-			shortSleep();
-		} else if (!rangedTicks.isEmpty() && rangedTicks.get(0) == 1 && !Prayers.isEnabled(Prayer.PROTECT_FROM_MISSILES)) {
-			shortSleep();
-			Prayers.toggle(Prayer.PROTECT_FROM_MISSILES);
-			shortSleep();
-		} else if (!meleeTicks.isEmpty() && meleeTicks.get(0) == 1 && !Prayers.isEnabled(Prayer.PROTECT_FROM_MELEE)) {
-			shortSleep();
-			Prayers.toggle(Prayer.PROTECT_FROM_MELEE);
-			shortSleep();
+		if (!mageTicks.isEmpty() && mageTicks.get(0) == 1) {
+			if (!Prayers.isEnabled(Prayer.PROTECT_FROM_MAGIC)) {
+				shortSleep();
+				Prayers.toggle(Prayer.PROTECT_FROM_MAGIC);
+				shortSleep();
+			}
+		} else if (!rangedTicks.isEmpty() && rangedTicks.get(0) == 1) {
+			if (!Prayers.isEnabled(Prayer.PROTECT_FROM_MISSILES)) {
+				shortSleep();
+				Prayers.toggle(Prayer.PROTECT_FROM_MISSILES);
+				shortSleep();
+			}
+		} else if (!meleeTicks.isEmpty() && meleeTicks.get(0) == 1) {
+			if (!Prayers.isEnabled(Prayer.PROTECT_FROM_MELEE)) {
+				shortSleep();
+				Prayers.toggle(Prayer.PROTECT_FROM_MELEE);
+				shortSleep();
+			}
 		}
 
 		//idea here is to flick off prayers when not needed, conserving points / pots
@@ -374,25 +395,28 @@ public class FightCavePlugin extends Plugin
 				shortSleep();
 			}
 		}
-		if (Skills.getBoostedLevel(Skill.HITPOINTS) <= 90 && drinkTickTimeout < 0) {
-			Item saraBrew = Inventory.getFirst(ItemID.SARADOMIN_BREW1,ItemID.SARADOMIN_BREW2,ItemID.SARADOMIN_BREW3,ItemID.SARADOMIN_BREW4);
-			if (saraBrew != null) {
-				saraBrew.interact("Drink");
-				drinkTickTimeout = 3;
-			}
-		} else if ((Skills.getBoostedLevel(Skill.RANGED) <= 70 || Skills.getBoostedLevel(Skill.PRAYER) < 33) && drinkTickTimeout < 0) {
-			Item superRestore = Inventory.getFirst(ItemID.SUPER_RESTORE1,ItemID.SUPER_RESTORE2,ItemID.SUPER_RESTORE3,ItemID.SUPER_RESTORE4);
-			if (superRestore != null) {
-				superRestore.interact("Drink");
-				drinkTickTimeout = 3;
-			}
-		} else if (Skills.getBoostedLevel(Skill.RANGED) < 100) {
-			Item superRanging = Inventory.getFirst(ItemID.SUPER_RANGING_1,ItemID.SUPER_RANGING_2,ItemID.SUPER_RANGING_3,ItemID.SUPER_RANGING_4);
-			if (superRanging != null) {
-				superRanging.interact("Drink");
-				drinkTickTimeout = 3;
+		if (config.drink()) {
+			if (Skills.getBoostedLevel(Skill.HITPOINTS) <= 90 && drinkTickTimeout < 0) {
+				Item saraBrew = Inventory.getFirst(ItemID.SARADOMIN_BREW1,ItemID.SARADOMIN_BREW2,ItemID.SARADOMIN_BREW3,ItemID.SARADOMIN_BREW4);
+				if (saraBrew != null) {
+					saraBrew.interact("Drink");
+					drinkTickTimeout = 3;
+				}
+			} else if ((Skills.getBoostedLevel(Skill.RANGED) <= 70 || Skills.getBoostedLevel(Skill.PRAYER) < 33) && drinkTickTimeout < 0) {
+				Item superRestore = Inventory.getFirst(ItemID.SUPER_RESTORE1,ItemID.SUPER_RESTORE2,ItemID.SUPER_RESTORE3,ItemID.SUPER_RESTORE4);
+				if (superRestore != null) {
+					superRestore.interact("Drink");
+					drinkTickTimeout = 3;
+				}
+			} else if (Skills.getBoostedLevel(Skill.RANGED) < 100) {
+				Item superRanging = Inventory.getFirst(ItemID.SUPER_RANGING_1,ItemID.SUPER_RANGING_2,ItemID.SUPER_RANGING_3,ItemID.SUPER_RANGING_4);
+				if (superRanging != null) {
+					superRanging.interact("Drink");
+					drinkTickTimeout = 3;
+				}
 			}
 		}
+
 
 		drinkTickTimeout--;
 	}

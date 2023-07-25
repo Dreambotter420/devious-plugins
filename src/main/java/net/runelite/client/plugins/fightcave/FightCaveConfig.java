@@ -41,10 +41,18 @@ public interface FightCaveConfig extends Config
 			position = 0,
 			keyName = "flick",
 			name = "Flick Prayers",
-			description = "The prayers will be flicked, otherwise leaves last prayer on",
-			section = text
+			description = "The prayers will be flicked, otherwise leaves last prayer on"
 	)
 	default boolean flick() { return false; }
+
+	@ConfigItem(
+			position = 1,
+			keyName = "drink",
+			name = "Drink Pots",
+			description = "The pots will be drank"
+	)
+	default boolean drink() { return false; }
+
 	@ConfigSection(
 		keyName = "text",
 		position = 1,
