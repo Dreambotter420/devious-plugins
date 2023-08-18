@@ -172,22 +172,4 @@ public class InventoryLoadout {
         return extraItems;
     }
 
-    public boolean haveItemToWithdraw() {
-        return itemQueue.peek() != null;
-    }
-
-    /**
-     * returns stack size for withdrawal, 0 if none found in bank
-     * @return
-     */
-    public void withdrawItemInQueue() {
-        API.shortSleep();
-        log.debug("withdraw item in queue");
-        LoadoutItem tmp = itemQueue.poll();
-        // Use the item ID and quantity from the popped Pair
-        int itemID = tmp.getId();
-        int quantity = tmp.getItemQty();
-        API.withdrawItem(itemID, quantity, tmp.isNoted());
-        withdrawWaitTick = API.ticks;
-    }
 }

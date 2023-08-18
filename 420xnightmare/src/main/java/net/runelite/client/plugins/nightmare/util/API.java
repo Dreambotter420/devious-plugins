@@ -8,7 +8,9 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.chat.ChatColorType;
 import net.runelite.client.chat.ChatMessageBuilder;
 import net.runelite.client.chat.QueuedMessage;
+import net.runelite.client.plugins.nightmare.NightmarePlugin;
 import net.runelite.client.plugins.nightmare.util.loadouts.InventoryLoadout;
+import net.runelite.client.plugins.nightmare.util.loadouts.Jewelry;
 import net.unethicalite.api.commons.Rand;
 import net.unethicalite.api.commons.Time;
 import net.unethicalite.api.entities.NPCs;
@@ -99,6 +101,14 @@ public class API {
         return Movement.isWalking();
     }
     public static int clickLocalBank() {
+        if (NightmarePlugin.NIGHTMARE_UNDERGROUND_WALK_ZONE.contains(Players.getLocal())) {
+            if (Jewelry.getLeastDuelingChargeID() != -1) {
+                int sleep = CombatStuff.teleportOut();
+                Time.sleepTick();
+                Time.sleep(sleep);
+                return CombatStuff.teleportOut();
+            }
+        }
         return clickBank(BankLocation.getNearest());
     }
     public static int clickBank(BankLocation location) {
@@ -228,13 +238,12 @@ public class API {
         }
         return null;
     }
-
     /**
      * You can only interact with an NPC via the adjacent tiles to the NPC, and this method returns distance to closest tile
      * @param npc
      * @return
      */
-    public static int getClosestLocalAttackDistance(NPC npc, Client client) {
+    public static int getClosestLocalAttackDistanceWithinLineOfSight(NPC npc, Client client) {
         Set<WorldPoint> checkedTiles = new HashSet<>();
 
         List<WorldPoint> interactableTiles = Reachable.getInteractable(npc);
@@ -248,6 +257,27 @@ public class API {
                     if (currentDistance < shortestDistance) {
                         shortestDistance = currentDistance;
                     }
+                }
+                checkedTiles.add(tile);
+            }
+        }
+        return shortestDistance;
+    }
+    /**
+     * You can only interact with an NPC via the adjacent tiles to the NPC, and this method returns distance to closest tile
+     * @param npc
+     * @return
+     */
+    public static int getClosestLocalAttackDistance(NPC npc) {
+        Set<WorldPoint> checkedTiles = new HashSet<>();
+        List<WorldPoint> interactableTiles = Reachable.getInteractable(npc);
+        WorldPoint ourTile = Players.getLocal().getWorldLocation();
+        int shortestDistance = Integer.MAX_VALUE;
+        for (WorldPoint tile : interactableTiles) {
+            if (!checkedTiles.contains(tile)) {
+                int currentDistance = tile.distanceTo2D(ourTile);
+                if (currentDistance < shortestDistance) {
+                    shortestDistance = currentDistance;
                 }
                 checkedTiles.add(tile);
             }
@@ -289,7 +319,7 @@ public class API {
         NumberFormat nf = NumberFormat.getInstance();
         return nf.format(formattedNumber) + postfix;
     }
-    public static int getClosestAttackDistance(NPC npc, WorldPoint tileToEval, Client client) {
+    public static int getClosestAttackDistanceInLineOfSight(NPC npc, WorldPoint tileToEval, Client client) {
         Set<WorldPoint> checkedTiles = new HashSet<>();
 
         List<WorldPoint> interactableTiles = Reachable.getInteractable(npc);
@@ -308,56 +338,24 @@ public class API {
         }
         return shortestDistance;
     }
+    public static int getClosestAttackDistance(NPC npc, WorldPoint tileToEval) {
+        Set<WorldPoint> checkedTiles = new HashSet<>();
 
-    public static void withdrawItem(int itemID, int quantity, boolean noted) {
-        if (Bank.getCount(true, itemID) <= 0) {
-            log.debug("Missing itemID from bank in queue, skipping: "+itemID);
-            return;
-        }
-
-        //Withdraw by directly interacting for any clickable-action quantities and return immediately
-        Item bankItem = Bank.getFirst(itemID);
-        int foundActionIndex = -1;
-        int currentIndex = 0;
-        for (String action : bankItem.getActions()) {
-            if (currentIndex <= 0) {
-                currentIndex++;
-                continue;
+        List<WorldPoint> interactableTiles = Reachable.getInteractable(npc);
+        WorldArea ourArea = new WorldArea(tileToEval.getX(), tileToEval.getY(), 1, 1, 1);
+        int shortestDistance = Integer.MAX_VALUE;
+        for (WorldPoint tile : interactableTiles) {
+            if (!checkedTiles.contains(tile)) {
+                int currentDistance = tile.distanceTo2D(tileToEval);
+                if (currentDistance < shortestDistance) {
+                    shortestDistance = currentDistance;
+                }
+                checkedTiles.add(tile);
             }
-            if (action.contains("Withdraw-")) {
-                if (action.equals("Withdraw-X") || action.equals("Withdraw-All-but-1")) {
-                    currentIndex++;
-                    continue;
-                }
-                if (action.equals("Withdraw-All")) {
-                    if (quantity != 1 && quantity != 5 && quantity != 10 &&
-                            quantity >= Bank.getCount(true, itemID)) {
-                        log.debug("Bank count of: " +bankItem.getName() +": "+ Bank.getCount(true, itemID)+" LESS than our desired qty of: "+quantity);
-                        foundActionIndex = currentIndex;
-                        break;
-                    }
-                    currentIndex++;
-                    continue;
-                }
-                int availableActionQty = Integer.parseInt(action.replace("Withdraw-",""));
-                if (availableActionQty == quantity) {
-                    log.debug("found action index with quantity: "+availableActionQty+" equal to withdraw desired qty: "+quantity);
-                    foundActionIndex = currentIndex;
-                    break;
-                }
-            }
-            currentIndex++;
         }
-        if (foundActionIndex > -1) {
-            log.debug("Interacting action index "+foundActionIndex+" correlating to action: "+bankItem.getActions()[foundActionIndex]+"on item: "+bankItem.getName());
-            bankItem.interact(foundActionIndex + 1);
-            return;
-        }
-
-        //Call API method to handle withdraw-x quantities and wait for finish
-        log.debug("Withdraw-x of item/qty: "+bankItem.getName()+"/"+quantity);
-        Bank.withdraw(itemID, quantity, (noted ? Bank.WithdrawMode.NOTED : Bank.WithdrawMode.ITEM));
+        return shortestDistance;
     }
+
     public int getAmmoCount() {
         Item ammo = Equipment.fromSlot(EquipmentInventorySlot.AMMO);
         if (ammo == null || ammo.getName() == null) {

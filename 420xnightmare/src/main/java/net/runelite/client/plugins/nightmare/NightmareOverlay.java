@@ -39,7 +39,7 @@ class NightmareOverlay extends Overlay implements PaintInfo
 	@Override
 	public String[] getPaintInfo()
 	{
-		String version =  " v0";
+		String version =  " v1";
 		if (!plugin.isInFight()) {
 			return new String[] {
 					"Phosani murderer"+version+" by Dreambotter420 ^_^ ",

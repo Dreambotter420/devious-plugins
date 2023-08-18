@@ -42,7 +42,11 @@ public class Switching {
             }
             Item toEquip = Inventory.getFirst(id);
             if (toEquip != null && Inventory.contains(id)) {
-                String action = (toEquip.hasAction("Wear") ? "Wear" : "Wield");
+                String action;
+                if (toEquip.hasAction("Wear")) action = "Wear";
+                else if (toEquip.hasAction("Wield")) action = "Wield";
+                else action = "Equip";
+
                 log.debug("[SWITCHER] PASS with action: "+action);
                 toEquip.interact(action);
                 API.sleepClientTick();
@@ -72,7 +76,11 @@ public class Switching {
             }
             Item toEquip = Inventory.getFirst(id);
             if (toEquip != null && Inventory.contains(id)) {
-                String action = (toEquip.hasAction("Wear") ? "Wear" : "Wield");
+                String action;
+                if (toEquip.hasAction("Wear")) action = "Wear";
+                else if (toEquip.hasAction("Wield")) action = "Wield";
+                else action = "Equip";
+
                 log.debug("[SWITCHER] PASS with action: "+action);
                 toEquip.interact(action);
                 API.sleepClientTick();

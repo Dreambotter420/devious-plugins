@@ -26,6 +26,7 @@ import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.*;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetID;
+import net.runelite.api.widgets.WidgetInfo;
 import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -76,6 +77,7 @@ public class NightmarePlugin extends Script {
     //Nightmare's ID during phases
     private static final int NIGHTMARE_SLEEPWALKER_TRANSITION = 9422;
     // Nightmare's attack animations
+    private static final int NIGHTMARE_SLEEPWALKER_APPLYING_DAMAGE = 8604;
     private static final int NIGHTMARE_HUSK_SPAWN = 8565;
     private static final int NIGHTMARE_PARASITE_TOSS = 8606;
     private static final int NIGHTMARE_CHARGE = 8609;
@@ -86,6 +88,8 @@ public class NightmarePlugin extends Script {
     private static final int NIGHTMARE_MUSHROOM = 37739;
     private static final int NIGHTMARE_BLOSSOM = 37744;
     private static final int NIGHTMARE_BLOSSOM_BLOOM = 37745;
+    private static final int NIGHTMARE_DURING_SHADOWS = 9103;
+    private static final int NIGHTMARE_PRE_SHADOWS = 9102;
     private static final int NIGHTMARE_SHADOW = 1767;   // graphics object
     //NPC ids
     private static final int HUSK_RANGED = 9467;
@@ -93,7 +97,7 @@ public class NightmarePlugin extends Script {
     private static final WorldArea NIGHTMARE_ABOVE_GROUND_WALK_ZONE = new WorldArea(3577, 3170, 200, 377, 0);
     private static final WorldPoint ABOVE_GROUND_ENTRANCE_WALK = new WorldPoint(3728, 3302, 0);
     private static final WorldPoint ABOVE_GROUND_ENTRANCE = new WorldPoint(3728, 3300, 0);
-    private static final WorldArea NIGHTMARE_UNDERGROUND_WALK_ZONE = new WorldArea(3713, 9686, 197, 153, 1);
+    public static final WorldArea NIGHTMARE_UNDERGROUND_WALK_ZONE = new WorldArea(3713, 9686, 197, 153, 1);
     private static final WorldPoint FEROX_POOL_1 = new WorldPoint(3128, 3638, 0);
     private static final WorldPoint FEROX_POOL_2 = new WorldPoint(3128, 3633, 0);
     private static final WorldArea FEROX_WEST = new WorldArea(3144, 3625, 10, 16, 0);
@@ -101,7 +105,7 @@ public class NightmarePlugin extends Script {
     private static final int TALKED_SISTER_SENGA_VARPLAYER = 2647;
     private static final WorldPoint POOL_OF_NIGHTMARES = new WorldPoint(3808, 9780, 1);
     private static final WorldPoint SISTER_SENGA = new WorldPoint(3811, 9777, 1);
-    private static final WorldArea SENGA_POOL_UNDERGROUND_AREA = new WorldArea(3802, 9774, 13, 14, 1);
+    private static final WorldArea SENGA_POOL_UNDERGROUND_AREA = new WorldArea(3802, 9770, 13, 18, 1);
     private static final LocalPoint MIDDLE_LOCATION = new LocalPoint(6208, 8128);
     private static Instant nmDiedTimer  = null;
     private static final Set<LocalPoint> PHOSANIS_MIDDLE_LOCATIONS = ImmutableSet.of(new LocalPoint(6208, 7104), new LocalPoint(7232, 7104));
@@ -116,10 +120,14 @@ public class NightmarePlugin extends Script {
     public static boolean prepareSleepwalkers = false;
     public static boolean waitMagicCast = false;
 	public static int sleepwalkersSpawned = 0;
+    private static int enablePrayDelay = 0;
+    private static boolean drowsy = false;
 	public static boolean finalPhase = false;
+    public static boolean killedASleepwalker = false;
 	public static Actor ourCurrentTarget = null;
     public static int huskSwitchTicks = 0;
     public static Actor ourLastTarget = null;
+    public static boolean prepareAfterSleepwalkers = false;
     public static int eatTickTimer = 0;
     public static int drinkTickTimer = 0;
     public static boolean divinePotionExpiring = false;
@@ -136,6 +144,7 @@ public class NightmarePlugin extends Script {
     public static Set<WorldPoint> flowerSafeArea = new HashSet<>();
     public static boolean attackedHusk = false;
     public static boolean pokedNm = false;
+    public static boolean walkOfaShameHimHaha = false;
     public static boolean attackedParasite = false;
     private Set<Integer> allLoot = new HashSet<>();
     private static int walkingRandomPoint = Rand.nextInt(3, 6);
@@ -143,6 +152,7 @@ public class NightmarePlugin extends Script {
     private static Set<WorldPoint> blacklist = new HashSet<>();
     private static Set<WorldPoint> blacklistWalk = new HashSet<>();
     private static Set<WorldPoint> whitelist = new HashSet<>();
+    private static Set<WorldPoint> whitelistWalk = new HashSet<>();
     private static boolean xpGained = false;
     @Getter(AccessLevel.PACKAGE)
     private final Map<Integer, MemorizedTotem> totems = new HashMap<>();
@@ -225,9 +235,12 @@ public class NightmarePlugin extends Script {
             Prayer.PROTECT_FROM_MELEE,
             Prayer.PROTECT_FROM_MISSILES
     };
+    private final String drowsyMsg = "You're too drowsy to run!";
+    private final String undrowsyMsg = "The Nightmare's infection has worn off.";
     private boolean turnOffDefensivePrayers() {
         for (Prayer p : prayersToDefend) {
             if (Prayers.isEnabled(p)) {
+                Log.log("Turning off prayer: "+p.toString());
                 Prayers.toggle(p);
                 API.sleepClientTick();
                 return true;
@@ -331,11 +344,22 @@ public class NightmarePlugin extends Script {
         }*/
         long startLoopTick = API.ticks;
         refilledEctophial = false;
-        if (!Movement.isRunEnabled() && Movement.getRunEnergy() > 5 && sporesWorld.isEmpty()) {
+        if (!drowsy && !Movement.isRunEnabled() && Movement.getRunEnergy() > 5 && sporesWorld.isEmpty()) {
             Movement.toggleRun();
             API.fastSleep();
         }
         if (SENGA_POOL_UNDERGROUND_AREA.contains(Players.getLocal())) {
+            Widget dialogSpriteText = Widgets.get(WidgetInfo.DIALOG_SPRITE_TEXT);
+            if (dialogSpriteText != null && dialogSpriteText.isVisible() && dialogSpriteText.getText().contains("You need 60,000 x Coins to retrieve your items.")) {
+                Log.log("Poor as fuck buddy, sorry mate, can't continue script, need 60k gp for dying noob ass recovery");
+                this.stop();
+                return -1;
+            }
+            Widget dialogNPCText = Widgets.get(WidgetInfo.DIALOG_NPC_TEXT);
+            if (dialogNPCText != null && dialogNPCText.isVisible() && dialogNPCText.getText().contains("Sorry, but I don't have anything for you. If I did")) {
+                Log.log("Collected all items from Senga! Nice");
+                walkOfaShameHimHaha = false;
+            }
             inLobby = true;
         } else {
             inLobby = false;
@@ -567,12 +591,17 @@ public class NightmarePlugin extends Script {
 
             //Pray against nightmare or husks, depending on exact situation
             //Husk about to attack, nm not
-            if ((huskMagicAttackTicks == 1 || huskMagicAttackTicks == 2) && (pendingNightmareAttack == null || (pendingNightmareAttack != null && ((pendingNightmareAttack.getPrayer().equals(Prayer.PROTECT_FROM_MELEE) && ticksUntilNextAttack != 5) || (!pendingNightmareAttack.getPrayer().equals(Prayer.PROTECT_FROM_MELEE) && ticksUntilNextAttack != 4))))) {
+            if ((huskMagicAttackTicks == 1) &&
+                    ((pendingNightmareAttack.getPrayer().equals(Prayer.PROTECT_FROM_MELEE) && ticksUntilNextAttack != 5) ||
+                            (!pendingNightmareAttack.getPrayer().equals(Prayer.PROTECT_FROM_MELEE) && ticksUntilNextAttack != 4))) {
                 if (!Prayers.isEnabled(Prayer.PROTECT_FROM_MAGIC)) {
                     API.enablePrayer(cursed, Prayer.PROTECT_FROM_MAGIC);
                 }
             } else if (pendingNightmareAttack != null && ticksUntilNextAttack >= 4) {
-                API.enablePrayer(cursed, pendingNightmareAttack.getPrayer());
+                if (enablePrayDelay == 0) {
+                    API.enablePrayer(cursed, pendingNightmareAttack.getPrayer());
+                    enablePrayDelay = 1;
+                }
             } else {
                 turnOffDefensivePrayers();
             }
@@ -583,7 +612,33 @@ public class NightmarePlugin extends Script {
                 return API.returnTick();
             }
 
-            //Prepare for husk spawn
+            // projectile for sleepwalkers spawned
+            if (prepareSleepwalkers) {
+                Switching.equip(sleepwalkerWeapon);
+                turnOffAllPrayers();
+                return API.returnTick();
+            }
+            // projectile for sleepwalkers spawned and all sleepwalkers dead, switch back to NM gear
+            if (prepareAfterSleepwalkers) {
+                //Kill the parasites spawn during sleepwalker phase
+                if (!parasites.isEmpty()) {
+                    NPC closestParasite = parasites.stream()
+                            .min(Comparator.comparingInt(npc -> npc.distanceTo(Players.getLocal())))
+                            .orElse(null);
+                    if (closestParasite == null || closestParasite.getName() == null) {
+                        Log.log("null NPC found of tracked PARASITES");
+                        parasites.remove(closestParasite);
+                        return 10;
+                    }
+                    log.debug("Kill parasite");
+                    return killParasite(closestParasite, parasiteFullSwapIDs);
+                }
+                Switching.equip(nmDPSFulLSwapIDs);
+                prayMeleeOffensive();
+                return API.returnTick();
+            }
+
+            //Prepare for husk spawn by switching and resetting attack tick timer to get fastest hits off on husks
             if (huskSwitchTicks >= 1) {
                 // switching to event rpg before they spawn
                 if (!Switching.equip(huskFullSwapIDs)) {
@@ -591,11 +646,10 @@ public class NightmarePlugin extends Script {
                 }
                 // stop attacking nm to get fastest hit on husks
                 if (ourCurrentTarget != null && ourCurrentTarget.getName() != null) {
+                    Log.log("reset attack ticks for husk preparation by walking our own tile");
                     Movement.walk(Players.getLocal());
                     return API.returnTick();
                 }
-                // dont pray defensive
-                turnOffDefensivePrayers();
                 return API.returnTick();
             }
             //Kill the husks that spawn, the existence of husks force all shadows to spawn outside our tile range, excluding the need to check to "off tile" here
@@ -607,6 +661,7 @@ public class NightmarePlugin extends Script {
 
             // here is possible for blocked tiles to damage or slow us so aggregate whitelist tiles (flower power area or arena area radius around us) and blacklist tiles (everything else)
             List<WorldPoint> sortedWhitelist = new ArrayList<>();
+            List<WorldPoint> sortedWhitelistWalk = new ArrayList<>();
 
             NPC totemNPC = getClosestTotem();
             if (whitelist.isEmpty()) {
@@ -617,13 +672,16 @@ public class NightmarePlugin extends Script {
                 sortedWhitelist = whitelist.stream()
                         .sorted(Comparator.comparingInt(tile -> tile.distanceTo(Players.getLocal())))
                         .collect(Collectors.toList());
-                if (parasites.isEmpty()) {
+                sortedWhitelistWalk = whitelistWalk.stream()
+                        .sorted(Comparator.comparingInt(tile -> tile.distanceTo(Players.getLocal())))
+                        .collect(Collectors.toList());
+                if (parasites.isEmpty() && totemNPC != null) {
                     //if we find any parasites active, ignore totem sorting, otherwise need to sort whitelist tiles from distance to nearest totem interactable tile
-                    sortedWhitelist = findClosestWhitelistedTilesSortedSpeciallyForTotems(sortedWhitelist, totemNPC);
+                    sortedWhitelistWalk = findClosestWhitelistedTilesSortedSpeciallyForTotems(sortedWhitelistWalk, totemNPC);
                 }
 
             }
-            if (sortedWhitelist != null && !sortedWhitelist.contains(Players.getLocal().getWorldLocation())) {
+            if (!sortedWhitelist.get(0).equals(Players.getLocal().getWorldLocation())) {
                 Log.log("Hopping off unsafe tile");
                 //filter list for tiles directly in interactable tile to nm and check if has any
 
@@ -640,7 +698,7 @@ public class NightmarePlugin extends Script {
 
                 //only walk to interactable nm tile when no totems, otherwise path towards totem
                 if (interactableNm != null && totemNPC == null) {
-                    final List<WorldPoint> finalInteractableNm = interactableNm;
+                    List<WorldPoint> finalInteractableNm = new ArrayList<>();
                     //first, check if any tiles within distance of 2 and interactable tile of nm
                     List<WorldPoint> interactableWalkableWhitelist = sortedWhitelist
                             .stream()
@@ -662,39 +720,23 @@ public class NightmarePlugin extends Script {
                                     .sorted(Comparator.comparingInt(wp -> wp.distanceTo(Players.getLocal())))
                                     .collect(Collectors.toList());
                             if (!interactableWhitelist.isEmpty()) {
-                                WorldPoint toWalk = interactableWhitelist.get(0);
-                                walkTile.add(toWalk);
-                                API.fastSleep();
-                                Movement.walk(toWalk);
+                                walk(interactableWhitelist.get(0));
                                 return API.returnTick();
                             }
                             Log.log("Uhhh NO safetiles around nightmare :o");
                             return API.returnTick();
                         }
-                        WorldPoint toWalk = walkableWhitelist.get(0);
-                        walkTile.add(toWalk);
-                        API.fastSleep();
-                        Movement.walk(toWalk);
+                        walk(walkableWhitelist.get(0));
                         return API.returnTick();
                     }
-                    WorldPoint toWalk = interactableWalkableWhitelist.get(0);
-                    walkTile.add(toWalk);
-                    API.fastSleep();
-                    Movement.walk(toWalk);
+                    walk(interactableWalkableWhitelist.get(0));
                     return API.returnTick();
                 }
                 // Walk to the nearest whitelisted tile and return early to let walk interaction slap on next tick
-
-                walkTile.add(sortedWhitelist.get(0));
-                API.fastSleep();
-                Movement.walk(sortedWhitelist.get(0));
+                walk(sortedWhitelist.get(0));
                 return API.returnTick();
             }
-            if (sortedWhitelist == null) {
-                log.debug("Staying put when mage totems active AND targeted totem is opposite quadrant from us in safe quandrant of flower power AND shadows active... lol");
-            } else {
-                log.debug("Closest whitelist tile: " + (sortedWhitelist.isEmpty() ? "EMPTY WHITELIST!" : sortedWhitelist.get(0).toString()) + " EQUAL TO our tile: " + Players.getLocal().getWorldLocation().toString() + " with global ticks=" + API.ticks + " and shadows countdown ticks=" + shadowsTicks);
-            }
+            log.debug("Closest whitelist tile: " + (sortedWhitelist.isEmpty() ? "EMPTY WHITELIST!" : sortedWhitelist.get(0).toString()) + " EQUAL TO our tile: " + Players.getLocal().getWorldLocation().toString() + " with global ticks=" + API.ticks + " and shadows countdown ticks=" + shadowsTicks);
             if (ticksUntilParasite > 0 && ticksUntilParasite <= 3) {
                 prayMeleeOffensive();
                 if (!Switching.equip(parasiteFullSwapIDs)) {
@@ -702,27 +744,33 @@ public class NightmarePlugin extends Script {
                 }
 
                 if (ourCurrentTarget != null && ourCurrentTarget.getName() != null) {
+                    Log.log("reset attack ticks for parasite preparation by walking our own tile");
                     walk(Players.getLocal().getWorldLocation());
                 }
                 return API.returnTick();
             }
             //Kill the parasites that spawn
             if (!parasites.isEmpty()) {
-                whitelist.removeAll(blacklistWalk);
                 if (whitelist.isEmpty()) {
                     // no whitelisted tiles left
                     Log.log("NOTHING IS SAFE!!! BLACKLIST TILE AND NO WHITELISTED");
                     return API.returnTick();
-                } else if (sortedWhitelist != null && !sortedWhitelist.contains(Players.getLocal().getWorldLocation())) {
+                } else if (!sortedWhitelist.get(0).equals(Players.getLocal().getWorldLocation())) {
                     Log.log("Hop off unsafe tile for parasite future attack");
-                    walkTile.add(sortedWhitelist.get(0));
-                    Movement.walk(sortedWhitelist.get(0));
+                    walk(sortedWhitelist.get(0));
                     return API.returnTick();
+                }
+                NPC closestParasite = parasites.stream()
+                        .min(Comparator.comparingInt(npc -> npc.distanceTo(Players.getLocal())))
+                        .orElse(null);
+                if (closestParasite == null || closestParasite.getName() == null) {
+                    Log.log("null NPC found of tracked PARASITES");
+                    parasites.remove(closestParasite);
+                    return 10;
                 }
 
                 log.debug("Kill parasite");
-                killParasite(parasiteFullSwapIDs);
-                return API.returnTick();
+                return killParasite(closestParasite, parasiteFullSwapIDs);
             }
 
             //Drink sanfew serums when preggers
@@ -746,16 +794,28 @@ public class NightmarePlugin extends Script {
             // Check if totems are active and need damaging, if so, get closest one
             if (totemNPC != null) {
                 //need to ensure can wait 1 tick to cast spell :P
-                whitelist.removeAll(blacklistWalk);
-                if (whitelist.isEmpty()) {
-                    // no whitelisted tiles left
-                    Log.log("NOTHING IS SAFE!!! BLACKLIST TILE AND NO WHITELISTED - TOTEMS");
+                if (sortedWhitelistWalk.isEmpty()) {
+                    // no whitelisted tiles left in range of totems
+                    Log.log("AFK this tick due to on whitelisted tile but out of range of possible totems (flower power + shadows + player in opposite corner of targeted totem)");
                     return API.returnTick();
-                } else if (sortedWhitelist != null && !sortedWhitelist.contains(Players.getLocal().getWorldLocation())) {
-                    walkTile.add(sortedWhitelist.get(0));
-                    Log.log("hop off future unsafe tile for totems");
-                    Movement.walk(sortedWhitelist.get(0));
-                    return API.returnTick();
+                } else {
+                    final WorldPoint closestSortedWhitelistWalk = sortedWhitelistWalk.get(0);
+                    if (!closestSortedWhitelistWalk.equals(Players.getLocal().getWorldLocation())) {
+                        if (API.getClosestAttackDistance(totemNPC, closestSortedWhitelistWalk) > 8) {
+                            double closestDist = API.getPythagoreanDistance(closestSortedWhitelistWalk, closestSortedWhitelistWalk);
+                            double ourDist = API.getPythagoreanDistance(Players.getLocal().getWorldLocation(), closestSortedWhitelistWalk);
+                            if (closestDist < ourDist) {
+                                Log.log("hop off future unsafe tile for totems (out of range) closer towards Totem");
+                                walk(closestSortedWhitelistWalk);
+                            } else {
+                                Log.log("Chilling here AFK while totems out of our immediate range and no tiles to get us closer");
+                            }
+                        } else {
+                            Log.log("hop off future unsafe tile for totems (in range)");
+                            walk(closestSortedWhitelistWalk);
+                        }
+                        return API.returnTick();
+                    }
                 }
                 //Eat at hitpoints
                 if (CombatStuff.shouldEat(config.healSetpoint()) && CombatStuff.eat()) {
@@ -792,100 +852,24 @@ public class NightmarePlugin extends Script {
             //dont attack nightmare if she is surging / murder run
             if (!murderRunTiles.isEmpty()) {
 				if (ourCurrentTarget != null && ourCurrentTarget.getTag() == nm.getTag()) {
-					Movement.walk(sortedWhitelist.get(0));
+					walk(sortedWhitelist.get(0));
 				}
                 return API.returnTick();
             }
             if (nm != null && nm.getName() != null && !nm.isDead() && nm.hasAction("Attack")) {
-                if (prepareSleepwalkers) {
-                    Switching.equip(sleepwalkerWeapon);
-                    turnOffAllPrayers();
-                    return API.returnTick();
+                int result = safelyWalkToInteractAttackMeleeNPC(
+                        nm,
+                        nmDPSFulLSwapIDs,
+                        true,
+                        minSpec,
+                        specWeapon,
+                        specialFullSwapIDs
+                );
+                if (result == -1) {
+                    Log.log("Not found any safe tiles near nightmare Reachable.getInteractable() filtered from blacklist :o");
+                } else {
+                    return result;
                 }
-                //see if we are in valid attackable range to her
-                List<WorldPoint> interactableNm = Reachable.getInteractable(nm);
-                List<WorldPoint> surroundingNm = interactableNm;
-                surroundingNm.removeAll(blacklist);
-                surroundingNm.removeIf(p -> !Reachable.isWalkable(p) || !whitelist.contains(p));
-                //See if we can move into a valid tile for next tick attack near her
-                List<WorldPoint> surroundingNmToWalk = interactableNm;
-                surroundingNmToWalk.removeAll(blacklistWalk);
-
-                if (surroundingNm.size() > 0) {
-                    //check list for any tiles which distance <= 1 and directly east/west, if so, just attack
-                    List<WorldPoint> directAttackSurroundingNm = surroundingNm.stream().filter(t -> t.distanceTo(Players.getLocal()) <= 1 && isDirectCompassDirectionFromUs(true, t.getWorldLocation())).collect(Collectors.toList());
-                    //check all blacklist-removed interactable tiles checked for being directly east/west of us, need to also check non-blacklist-removed interactable tiles for same bc server dont care if shadows or not, gonna go east/west if interactable tile available there
-                    if (directAttackSurroundingNm.isEmpty() && Reachable.getInteractable(nm).stream().noneMatch(t -> isDirectCompassDirectionFromUs(true, t))) {
-                        //have no option to attack east/west tile directly, check if have interaction tile 1 distance north/south
-                        //must check east/west first, then north/south, because this how the servers prioritize interaction requests on npcs when needing to path to interaction tile
-                        directAttackSurroundingNm = surroundingNm.stream().filter(t -> t.distanceTo(Players.getLocal()) <= 1 && isDirectCompassDirectionFromUs(false, t.getWorldLocation())).collect(Collectors.toList());
-                    }
-                    boolean directlyAttack = false;
-                    if (!directAttackSurroundingNm.isEmpty()) {
-                        directlyAttack = true;
-                        surroundingNm = directAttackSurroundingNm;
-                    }
-                    surroundingNm.sort(Comparator.comparingInt(t -> t.distanceTo(Players.getLocal())));
-                    WorldPoint herClosestTile = null;
-                    if (!surroundingNm.isEmpty()) {
-                        herClosestTile = surroundingNm.get(0);
-                    }
-                    if (directlyAttack) {
-						int spec = Combat.getSpecEnergy();
-                        if (ourCurrentTarget == null || ourCurrentTarget.getTag() != nm.getTag()) {
-                            log.debug("switch melee + attack nm");
-
-                            if (spec < minSpec && !Switching.equip(nmDPSFulLSwapIDs)) {
-                                return API.fastReturn();
-                            }
-                            if (nm.getId() == NIGHTMARE_SLEEPWALKER_TRANSITION) {
-                                return API.returnTick();
-                            }
-                            nm.interact("Attack");
-                            return API.returnTick();
-                        }
-                        // interacting with nightmare - able to spec here if have spec
-                        if (spec >= 100 && !Equipment.contains(specWeapon)) {
-                            Log.log("switch spec weapon at spec >= 100");
-                            if (!Switching.equip(specialFullSwapIDs)) {
-                                return API.fastReturn();
-                            }
-                            return API.returnTick();
-                        }
-						if (spec >= minSpec && Equipment.contains(specWeapon)) {
-							Log.log("toggle spec at "+spec+"%");
-							Combat.toggleSpec();
-							return API.returnTick();
-						}
-                        Switching.equip(nmDPSFulLSwapIDs);
-                        return API.returnTick();
-                    }
-                    if (herClosestTile != null) {
-                        if (!Switching.equip(nmDPSFulLSwapIDs)) {
-                            return API.fastReturn();
-                        }
-                        if (((!sporesWorld.isEmpty() || !shadowsPoints.isEmpty()) && ((Movement.isRunEnabled() && herClosestTile.distanceTo(Players.getLocal()) > 1) || herClosestTile.distanceTo(Players.getLocal()) > 2))) {
-                            Log.log("No action this tick cos NM too far to walk in range to 1 tick");
-                            return API.returnTick();
-                        }
-                        WorldPoint ourDest = null;
-                        if (!walkTile.isEmpty()) {
-                            for (WorldPoint walkT : walkTile) {
-                                if (herClosestTile.equals(walkT)) {
-                                    ourDest = walkT;
-                                    break;
-                                }
-                            }
-                        }
-                        if (ourDest == null) {
-                            Log.log("Walking to nm interaction range");
-                            walkTile.add(herClosestTile);
-                            Movement.walk(herClosestTile);
-                        }
-                    }
-                    return API.returnTick();
-                }
-                Log.log("Not found any safe tiles near nightmare Reachable.getInteractable() filtered from blacklist :o");
             }
             return API.returnTick();
         }
@@ -977,16 +961,108 @@ public class NightmarePlugin extends Script {
             return API.fastReturn();
         }
         fulfilledEquipment = meleeEqpt.fulfilled();
-        fulfilledGear = (Inventory.contains(ItemID.TRIDENT_OF_THE_SWAMP) &&
-                Inventory.contains(ItemID.IMBUED_GUTHIX_CAPE) &&
-                Inventory.contains(ItemID.OCCULT_NECKLACE) &&
-                Inventory.contains(ItemID.TORMENTED_BRACELET) &&
-                Inventory.contains(ItemID.TOXIC_BLOWPIPE) &&
-                Inventory.contains(ItemID.GOBLIN_PAINT_CANNON) &&
-                Inventory.contains(ItemID.GRANITE_MAUL_24225) &&
-                Inventory.contains(ItemID.ELDER_MAUL) &&
+        if (Inventory.contains(parasiteWeapon) &&
+                Inventory.contains(huskWeapon) &&
+                Inventory.contains(specWeapon) &&
+                Inventory.contains(sleepwalkerWeapon) &&
                 Inventory.contains(ItemID.ECTOPHIAL) &&
-                Inventory.contains(existingDuelCharge));
+                Inventory.contains(existingDuelCharge)) {
+            boolean haveMage = true;
+            for (int i : mageGearInvy) {
+                if (!Inventory.contains(i)) {
+                    haveMage = false;
+                    break;
+                }
+            }
+            if (!haveMage) {
+                fulfilledGear = false;
+            } else {
+                log.debug("Have invy swap gear for fight");
+                fulfilledGear = true;
+            }
+        } else {
+            fulfilledGear = false;
+        }
+        //death walk
+        if (walkOfaShameHimHaha) {
+            if (!Inventory.contains(ItemID.ECTOPHIAL)) {
+                if (Bank.isOpen() && Bank.Inventory.getCount(ItemID.ECTOPHIAL) > 0) {
+                    Bank.close();
+                    return API.returnTick();
+                }
+                if (!Bank.isOpen()) {
+                    return API.clickLocalBank();
+                }
+                if (!Bank.contains(ItemID.ECTOPHIAL)) {
+                    Log.log("No more teleports back to NM! Exiting script");
+                    this.stop();
+                    return -1;
+                }
+                API.bankWithdraw(ItemID.ECTOPHIAL, 1, Bank.WithdrawMode.ITEM);
+                return API.returnTick();
+            }
+            if (!(NIGHTMARE_ABOVE_GROUND_WALK_ZONE.contains(Players.getLocal()) || NIGHTMARE_UNDERGROUND_WALK_ZONE.contains(Players.getLocal())) && Inventory.contains(ItemID.ECTOPHIAL)) {
+                if (Bank.isOpen()) {
+                    Bank.close();
+                    return API.returnTick();
+                }
+                useNMTeleport();
+                return API.shortReturn();
+            }
+            if (walkToPhosanisLobby()) {
+                //collect items here
+                Log.log("Collecting items here");
+                //collection interface open
+                Widget itemCollectOpen = Widgets.get (602, 1);
+                if (itemCollectOpen != null && itemCollectOpen.isVisible()) {
+                    //parse it for all items it contains
+                    int stacksLeft = 0;
+                    Widget stackCountWidget = Widgets.get(602, 10);
+                    Widget getGearBackButton = Widgets.get(602, 6); //can have "Unlock" or "Take-All" action
+                    String action = (getGearBackButton.hasAction("Unlock") ? "Unlock" : "Take-All");
+                    String stackCountFullText = stackCountWidget.getText();
+                    String[] firstSplit = stackCountFullText.split("<", 3);
+                    if (firstSplit.length > 2) {
+                        String[] secondSplit = firstSplit[1].split(">", 2);
+                        if (secondSplit.length > 1) {
+                            stacksLeft = Integer.parseInt(secondSplit[1]);
+                            if (stacksLeft > 0) {
+                                if (Inventory.isFull()) {
+                                    if (Inventory.contains(ItemID.ANGLERFISH)) {
+                                        if (eatTickTimer == 0) {
+                                            Inventory.getFirst(ItemID.ANGLERFISH).interact("Eat");
+                                            eatTickTimer = 3;
+                                        }
+                                        return API.returnTick();
+                                    }
+                                    Log.log("No more room in inventory when trying to collect items from senga, and no more anglerfish! wtf");
+                                    return API.returnTick();
+                                }
+                                Log.log("Have stacks: "+stacksLeft);
+                                getGearBackButton.interact(action);
+                                return API.returnTick();
+                            } else {
+                                Log.log("Collected all items from Senga! Nice");
+                                walkOfaShameHimHaha = false;
+                            }
+                        }
+                    }
+                    return API.returnTick();
+                }
+                if (Players.getLocal().isMoving()) {
+                    return -2;
+                }
+                NPC sisterSenga = NPCs.getNearest("Sister Senga");
+                if (sisterSenga == null || sisterSenga.getName() == null) {
+                    Log.log("Sister senga is null and we are in lobby area! :o");
+                    return -1;
+                }
+                sisterSenga.interact("Collect");
+                return API.returnTick();
+            }
+            Log.log("Walk of A-Shame-Him-Haha");
+            return API.returnTick();
+        }
         if (!fulfilledEquipment || !haveEnoughDosesForAnotherFight || !fulfilledGear || (!inLobby && !NIGHTMARE_UNDERGROUND_WALK_ZONE.contains(Players.getLocal()))) {
             //initialize bank cache
             if (!BankCache.checkCache()) {
@@ -1040,7 +1116,7 @@ public class NightmarePlugin extends Script {
                             this.stop();
                             return -1;
                         }
-                        API.withdrawItem(ItemID.ANGLERFISH, 1, false);
+                        API.bankWithdraw(ItemID.ANGLERFISH, 1, Bank.WithdrawMode.ITEM);
                         return API.returnTick();
                     }
                     if (eatTickTimer <= 0) {
@@ -1068,7 +1144,7 @@ public class NightmarePlugin extends Script {
                             this.stop();
                             return -1;
                         }
-                        API.withdrawItem(ItemID.STAMINA_POTION1, 1, false);
+                        API.bankWithdraw(ItemID.STAMINA_POTION1, 1, Bank.WithdrawMode.ITEM);
                         return API.returnTick();
                     }
                     if (drinkTickTimer <= 0) {
@@ -1097,9 +1173,7 @@ public class NightmarePlugin extends Script {
                     Log.log("Script error: no ectophial with fulfilled gear including it");
                     return API.shortReturn();
                 }
-                Item ectophial = Inventory.getFirst(i -> i.getId() == ItemID.ECTOPHIAL && i.hasAction("Empty"));
-                ectophial.interact("Empty");
-                Time.sleepUntil(() -> refilledEctophial, () -> Players.getLocal().isAnimating(), 100, 8000);
+                useNMTeleport();
                 return API.shortReturn();
             }
             if (!fulfilledGear || !fulfilledEquipment || !haveEnoughDosesForAnotherFight) {
@@ -1118,43 +1192,67 @@ public class NightmarePlugin extends Script {
             API.shortSleep();
             Keyboard.type("1", true);
         }
+        if (walkToPhosanisLobby()) {
+            if (Movement.isWalking() || Players.getLocal().isAnimating()) {
+                return API.returnTick();
+            }
+            TileObject nightmarePool = TileObjects.getFirstAt(POOL_OF_NIGHTMARES, p -> p.getName().equals("Pool of Nightmares"));
+            if (nightmarePool == null) {
+                Log.log("Script error: In senga/nightmare pool zone but nightmare pool null");
+                return API.returnTick();
+            }
+            nightmarePool.interact("Drink-from");
+            return API.returnTick();
+        }
+        return API.shortReturn();
+    }
+
+    public void useNMTeleport() {
+        Item ectophial = Inventory.getFirst(i -> i.getId() == ItemID.ECTOPHIAL && i.hasAction("Empty"));
+        ectophial.interact("Empty");
+        Time.sleepUntil(() -> refilledEctophial, () -> Players.getLocal().isAnimating(), 100, 8000);
+    }
+
+    public boolean walkToPhosanisLobby() {
         //walk on above ground to stairs
         if (NIGHTMARE_UNDERGROUND_WALK_ZONE.contains(Players.getLocal())) {
             Player hopAround = Players.getNearest(p -> p.distanceTo(Players.getLocal()) < 20 && !Players.getLocal().equals(p));
             // Walk underground to either sister senga or pool
             if (!inLobby) {
-
                 if (hopAround != null) {
                     Log.log("Hopping around player: " + hopAround.getName() + "distance from us: " + hopAround.distanceTo(Players.getLocal()));
                     if (HopWorld6HLog.openWorldHopper()) {
-                        return HopWorld6HLog.hop();
+                        HopWorld6HLog.hop();
+                        return false;
                     }
                     //keep walking after opening world hopper menu alongside player
                 }
                 if (shouldWalk()) {
-                    return walkTo(POOL_OF_NIGHTMARES);
+                    walkTo(POOL_OF_NIGHTMARES);
+                    return false;
                 }
-                return API.shortReturn();
+                return false;
             }
             if (hopAround != null) {
                 Log.log("Hopping around player: " + hopAround.getName() + "distance from us: " + hopAround.distanceTo(Players.getLocal()));
                 if (HopWorld6HLog.openWorldHopper()) {
-                    return HopWorld6HLog.hop();
+                    HopWorld6HLog.hop();
+                    return false;
                 }
                 //stop walking after opening world hopper menu alongside player if in lobby
-                return API.shortReturn();
+                return false;
             }
             if (Dialog.canContinue()) {
                 API.shortSleep();
                 Dialog.continueSpace();
                 Time.sleepTick();
-                return API.shortReturn();
+                return false;
             }
             if (Dialog.hasOption("Yes.")) {
                 API.shortSleep();
                 Dialog.chooseOption("Yes");
                 Time.sleepTick();
-                return API.shortReturn();
+                return false;
             }
 			/*if (!haveTalkedToSisterSenga()) {
 				NPC senga = NPCs.getNearest(n -> n.getWorldLocation().equals(SISTER_SENGA) && n.getName().equals("Sister Senga"));
@@ -1167,34 +1265,108 @@ public class NightmarePlugin extends Script {
 				Time.sleepUntil(() -> Dialog.isOpen(), () -> Players.getLocal().isMoving(), 100, 2000);
 				return API.shortReturn();
 			}*/
-            if (Movement.isWalking() || Players.getLocal().isAnimating()) {
-                return API.returnTick();
-            }
-            TileObject nightmarePool = TileObjects.getFirstAt(POOL_OF_NIGHTMARES, p -> p.getName().equals("Pool of Nightmares"));
-            if (nightmarePool == null) {
-                Log.log("Script error: In senga/nightmare pool zone but nightmare pool null");
-                return API.shortReturn();
-            }
-            nightmarePool.interact("Drink-from");
+            return true;
         }
         //somewhere in morytania eastern side
         if (NIGHTMARE_ABOVE_GROUND_WALK_ZONE.contains(Players.getLocal())) {
             TileObject stairs = TileObjects.getFirstSurrounding(ABOVE_GROUND_ENTRANCE, 4, g -> g.getName().equals("Stairs") && g.hasAction("Climb-down"));
             if (stairs == null || stairs.distanceTo(Players.getLocal().getWorldLocation()) > 18) {
                 if (shouldWalk()) {
-                    return walkTo(ABOVE_GROUND_ENTRANCE_WALK);
+                    walkTo(ABOVE_GROUND_ENTRANCE_WALK);
+                    return false;
                 }
-                return API.shortReturn();
+                return false;
             }
             stairs.interact("Climb-down");
             if (Time.sleepUntil(() -> NIGHTMARE_UNDERGROUND_WALK_ZONE.contains(Players.getLocal()), () -> Players.getLocal().isMoving() || Players.getLocal().isAnimating(), 100, 8000)) {
                 Time.sleepTicks(2);
             }
-            return API.shortReturn();
+            return false;
         }
-        return API.shortReturn();
+        return false;
     }
 
+    /**
+     * Returns int to sleep after walking, or if no tiles can interact with, return -1
+     * @param npc
+     * @return
+     */
+    public int safelyWalkToInteractAttackMeleeNPC(NPC npc, List<Integer> fullSwapIDs, boolean spec, int minSpec, int specWep, List<Integer> fullSpecSwapIDs) {
+        //see if we are in valid attackable range to NPC
+        List<WorldPoint> interactableTiles = Reachable.getInteractable(npc);
+        List<WorldPoint> surroundingNPC = new ArrayList<>(interactableTiles);
+        surroundingNPC.removeAll(blacklist);
+        surroundingNPC.removeIf(p -> !Reachable.isWalkable(p) || !whitelist.contains(p));
+        //See if we can move into a valid tile for next tick attack near her
+        List<WorldPoint> surroundingNPCToWalk = new ArrayList<>(interactableTiles);
+        surroundingNPCToWalk.removeAll(blacklistWalk);
+
+        if (surroundingNPC.size() > 0) {
+            //check list for any tiles which distance <= 1 and directly east/west, if so, just attack
+            List<WorldPoint> directAttackSurroundingNPC = surroundingNPC.stream().filter(t -> t.distanceTo(Players.getLocal()) <= 1 && isDirectCompassDirectionFromUs(true, t.getWorldLocation())).collect(Collectors.toList());
+            //check all blacklist-removed interactable tiles checked for being directly east/west of us, need to also check non-blacklist-removed interactable tiles for same bc server dont care if shadows or not, gonna go east/west if interactable tile available there
+            if (directAttackSurroundingNPC.isEmpty() && Reachable.getInteractable(npc).stream().noneMatch(t -> isDirectCompassDirectionFromUs(true, t))) {
+                //have no option to attack east/west tile directly, check if have interaction tile 1 distance north/south
+                //must check east/west first, then north/south, because this how the servers prioritize interaction requests on npcs when needing to path to interaction tile
+                directAttackSurroundingNPC = surroundingNPC.stream().filter(t -> t.distanceTo(Players.getLocal()) <= 1 && isDirectCompassDirectionFromUs(false, t.getWorldLocation())).collect(Collectors.toList());
+            }
+            boolean directlyAttack = false;
+            if (!directAttackSurroundingNPC.isEmpty()) {
+                directlyAttack = true;
+                surroundingNPC = directAttackSurroundingNPC;
+            }
+            surroundingNPC.sort(Comparator.comparingInt(t -> t.distanceTo(Players.getLocal())));
+            WorldPoint npcClosestTile = null;
+            if (!surroundingNPC.isEmpty()) {
+                npcClosestTile = surroundingNPC.get(0);
+            }
+            if (directlyAttack) {
+                int specPercent = Combat.getSpecEnergy();
+                if (ourCurrentTarget == null || ourCurrentTarget.getTag() != npc.getTag()) {
+                    log.debug("switch melee + attack "+npc.getName());
+
+                    if (spec && specPercent < minSpec && !Switching.equip(fullSwapIDs)) {
+                        return API.fastReturn();
+                    }
+                    if (npc.getId() == NIGHTMARE_SLEEPWALKER_TRANSITION) {
+                        return API.returnTick();
+                    }
+                    npc.interact("Attack");
+                    return API.returnTick();
+                }
+                if (spec) {
+                    // interacting with nightmare - able to spec here if have spec
+                    if (specPercent >= 100 && !Equipment.contains(specWep)) {
+                        Log.log("switch spec weapon at spec >= 100");
+                        if (!Switching.equip(fullSpecSwapIDs)) {
+                            return API.fastReturn();
+                        }
+                        return API.returnTick();
+                    }
+                    if (specPercent >= minSpec && Equipment.contains(specWep)) {
+                        Log.log("toggle spec at "+specPercent+"%");
+                        Combat.toggleSpec();
+                        return API.returnTick();
+                    }
+                }
+
+                Switching.equip(fullSwapIDs);
+                return API.returnTick();
+            }
+            if (npcClosestTile != null) {
+                if (!Switching.equip(fullSwapIDs)) {
+                    return API.fastReturn();
+                }
+                if (((!sporesWorld.isEmpty() || !shadowsPoints.isEmpty()) && ((Movement.isRunEnabled() && npcClosestTile.distanceTo(Players.getLocal()) > 1) || npcClosestTile.distanceTo(Players.getLocal()) > 2))) {
+                    Log.log("No action this tick cos "+npc.getName()+" too far to walk in range to 1 tick");
+                    return API.returnTick();
+                }
+                walk(npcClosestTile);
+            }
+            return API.returnTick();
+        }
+        return -1;
+    }
     @Override
     public void onStart(String... strings) {
 
@@ -1211,6 +1383,9 @@ public class NightmarePlugin extends Script {
         getNotedIDs();
         LootTracker.onItemContainerChanged(null);
         reset();
+
+        Log.log("TESTING: ENABLE DEATHWALK ON START");
+        walkOfaShameHimHaha = true;
     }
     public void getNotedIDs() {
         if (allLoot.isEmpty()) {
@@ -1290,23 +1465,20 @@ public class NightmarePlugin extends Script {
         blacklist.clear();
         blacklistWalk.clear();
         whitelist.clear();
+        whitelistWalk.clear();
         prepareSleepwalkers = false;
         finalPhase = false;
         divinePotionExpiring = false;
         huskSwitchTicks = 0;
+        killedASleepwalker = false;
+        prepareAfterSleepwalkers = false;
+        drowsy = false;
+        walkOfaShameHimHaha = false;
     }
 
     @Subscribe
     private void onClientTick(ClientTick event) {
         API.waitClientTick = false;
-        String toSendChatbox = null;
-        while ((toSendChatbox = Log.msgs.poll()) != null) {
-            Static.getChatMessageManager()
-                    .queue(QueuedMessage.builder()
-                            .type(ChatMessageType.CONSOLE)
-                            .runeLiteFormattedMessage(toSendChatbox)
-                            .build());
-        }
     }
     @Subscribe
     private void onGameObjectSpawned(GameObjectSpawned event) {
@@ -1419,7 +1591,10 @@ public class NightmarePlugin extends Script {
                 huskSwitchTicks = 4;
                 break;
             case 1768: //4 projectiles coming to nm to signal end of phase, start of sleepwalker transition
-                prepareSleepwalkers = true;
+                if (!prepareSleepwalkers) {
+                    Log.log("Preparing for sleepwalker spawn");
+                    prepareSleepwalkers = true;
+                }
                 break;
         }
     }
@@ -1443,7 +1618,7 @@ public class NightmarePlugin extends Script {
             //reset everything
             reset();
             nm = npc;
-            generateSquare(arenaTiles, nm.getWorldArea().getCenter(), 10);
+            generateSquare(arenaTiles, nm.getWorldArea().getCenter(), 9);
             inFight = true;
         }
 
@@ -1472,8 +1647,6 @@ public class NightmarePlugin extends Script {
             nightmareCharging = true;
             getNightmareChargeRange(npc);
             ticksUntilNextAttack = 5;
-        } else if (animationId == NIGHTMARE_SLEEPWALKER_TRANSITION && isPhosanis(npc.getId())) {
-            prepareSleepwalkers = true;
         }
 
         if (nightmareCharging && animationId != -1 && isPhosanis(npc.getId()) && animationId != NIGHTMARE_CHARGE) {
@@ -1495,6 +1668,14 @@ public class NightmarePlugin extends Script {
                 Timer parasiteInfoBox = new Timer(16200L, ChronoUnit.MILLIS, itemManager.getImage(ItemID.PARASITIC_EGG), this);
                 parasiteInfoBox.setTooltip("Parasites");
                 infoBoxManager.addInfoBox(parasiteInfoBox);
+            }
+        }
+        //prepare after sleepwalkers phase
+        if (isPhosanis(npc.getId())) {
+            if (animationId == NIGHTMARE_SLEEPWALKER_APPLYING_DAMAGE) {
+                prepareAfterSleepwalkers = true;
+            } else {
+                prepareAfterSleepwalkers = false;
             }
         }
     }
@@ -1660,14 +1841,14 @@ public class NightmarePlugin extends Script {
         }
 
         if (npc.getName() != null && npc.getName().equalsIgnoreCase("husk")) {
-            huskMagicAttackTicks = 6;
+            huskMagicAttackTicks = 7;
             husks.add(npc);
         }
 
         if (npc.getName() != null && npc.getName().equalsIgnoreCase("sleepwalker")) {
             if (!sleepwalkers.contains(npc) && !finalPhase) {
                 prepareSleepwalkers = false;
-                Log.log("add spawned sleepwalker tag: " + npc.getTag());
+                log.debug("add spawned sleepwalker tag: " + npc.getTag());
                 sleepwalkers.add(npc);
 				sleepwalkersSpawned++;
             }
@@ -1693,6 +1874,7 @@ public class NightmarePlugin extends Script {
             Log.log("We are DEAD! :-(");
             arenaTiles.clear();
             reset();
+            walkOfaShameHimHaha = true;
         }
         if (event.getActor() instanceof NPC && event.getActor().getName() != null) {
             final NPC npc = (NPC) event.getActor();
@@ -1721,31 +1903,37 @@ public class NightmarePlugin extends Script {
     @Subscribe
     private void onChatMessage(ChatMessage event) {
         if (!inFight || nm == null || event.getType() != ChatMessageType.GAMEMESSAGE) {
-            if (event.getType() != ChatMessageType.PLAYERRELATED && event.getMessage().toLowerCase().contains("you don't have enough inventory space.")) {
-                InventoryLoadout.itemQueue.clear();
+            if (event.getType() != ChatMessageType.PLAYERRELATED ) {
+                if (event.getMessage().toLowerCase().contains("you don't have enough inventory space.")) {
+                    InventoryLoadout.itemQueue.clear();
+                }
+                if (event.getMessage().contains(drowsyMsg)) {
+                    drowsy = true;
+                }
+                if (event.getMessage().contains(undrowsyMsg)) {
+                    drowsy = false;
+                }
+
+                if (event.getMessage().contains("The Nightmare has reawoken!")) {
+                    pokedNm = false;
+                }
+                if (event.getMessage().contains("The Nightmare is waking...")) {
+                    pokedNm = true;
+                }
+
+                if (event.getMessage().contains("You refill the ectophial from the Ectofuntus.")) {
+                    refilledEctophial = true;
+                }
+                if (event.getMessage().contains("Your divine potion effect is about to expire.")) {
+                    divinePotionExpiring = false;
+                }
             }
 
-            if (event.getType() != ChatMessageType.PLAYERRELATED && event.getMessage().contains("You refill the ectophial from the Ectofuntus.")) {
-                refilledEctophial = true;
-            }
-
-            if (event.getType() != ChatMessageType.PLAYERRELATED && event.getMessage().contains("The Nightmare has reawoken!")) {
-                pokedNm = false;
-            }
-
-            if (event.getType() != ChatMessageType.PLAYERRELATED && event.getMessage().contains("The Nightmare is waking...")) {
-                pokedNm = true;
-            }
-
-            if (event.getType() != ChatMessageType.PLAYERRELATED && event.getMessage().contains("You refill the ectophial from the Ectofuntus.")) {
-                refilledEctophial = true;
-            }
-            if (event.getType() != ChatMessageType.PLAYERRELATED && event.getMessage().contains("Your divine potion effect is about to expire.")) {
-                divinePotionExpiring = false;
-            }
-            if (event.getType() != ChatMessageType.PLAYERRELATED && (event.getMessage().contains("The Nightmare will awaken in 10 seconds!") || event.getMessage().contains("The Nightmare will awaken in 5 seconds!") || event.getMessage().contains("The Nightmare has awoken!"))) {
-                Log.log("Fight start");
-                inFight = true;
+            if ((event.getMessage().contains("The Nightmare will awaken in 10 seconds!") || event.getMessage().contains("The Nightmare will awaken in 5 seconds!") || event.getMessage().contains("The Nightmare has awoken!"))) {
+                if (!inFight) {
+                    Log.log("Fight start");
+                    inFight = true;
+                }
             }
             return;
         }
@@ -1795,6 +1983,10 @@ public class NightmarePlugin extends Script {
     private void onGameTick(final GameTick event) {
         API.ticks++;
         log.debug("Current tick: " + API.ticks);
+        if (enablePrayDelay > 0) enablePrayDelay--;
+        if (sleepwalkersSpawned > 0) {
+            Log.log("Sleepwalker spawned: "+sleepwalkersSpawned);
+        }
 		if (sleepwalkersSpawned == 4) {
 			finalPhase = true;
 		}
@@ -1858,6 +2050,7 @@ public class NightmarePlugin extends Script {
                     } else if (npc.getName().equalsIgnoreCase("sleepwalker")) {
                         log.debug("NAME MATCH - Removing sleepwalker from tracked list due to HP gained while attacking (one-shot assumption) - tick: " + API.ticks);
                         sleepwalkers.remove(npc);
+                        killedASleepwalker = true;
                     } else if (npc.getName().equalsIgnoreCase("husk")) {
                         log.debug("Removing husk from tracked list due to HP gained while attacking (one-shot assumption) - tick: " + API.ticks);
                         husks.remove(npc);
@@ -1871,7 +2064,10 @@ public class NightmarePlugin extends Script {
 		xpGained = false;
     }
     public void turnOffAllPrayers() {
-        Prayers.disableAll();
+        if (Prayers.anyActive()) {
+            Log.log("Turning off some active prayers");
+            Prayers.disableAll();
+        }
     }
     public void turnOffOffensiveMeleePray() {
         if (Skills.getBoostedLevel(Skill.PRAYER) <= 0) {
@@ -1922,44 +2118,54 @@ public class NightmarePlugin extends Script {
         }
     }
     public List<WorldPoint> findClosestWhitelistedTilesSortedSpeciallyForTotems(List<WorldPoint> sortedWhitelist, NPC totemNPC) {
-        if (totemNPC == null || totemNPC.getName() == null) {
-            return sortedWhitelist;
-        }
         //if we are already in range in whitelist tile dont need to walk
-        int closestAttackRange = API.getClosestLocalAttackDistance(totemNPC, client);
+        int closestAttackRange = API.getClosestLocalAttackDistance(totemNPC);
 		WorldPoint centerTotem = totemNPC.getWorldArea().getCenter();
-        if (closestAttackRange <= 8 && centerTotem.distanceTo(Players.getLocal()) > 3 && sortedWhitelist.contains(Players.getLocal().getWorldLocation())) {
+        if (closestAttackRange <= 8 && centerTotem.distanceTo(Players.getLocal()) > 3 && sortedWhitelist.get(0).equals(Players.getLocal().getWorldLocation())) {
             //standing inside whitelist already
             return sortedWhitelist;
         }
+        List<WorldPoint> tmpInRangeSortedWhitelist = new ArrayList<>(sortedWhitelist);
+        List<WorldPoint> tmpSortedWhitelist = new ArrayList<>(sortedWhitelist);
         //remove tiles too close to totem to avoid pathing fuckery
-        sortedWhitelist.removeIf(p -> centerTotem.distanceTo(p) <= 3);
+        tmpInRangeSortedWhitelist.removeIf(p -> centerTotem.distanceTo(p) <= 3 || API.getClosestAttackDistance(totemNPC, p) > 8);
 
-        for (int outerdistance = 1; outerdistance <= 8; outerdistance += 2) {
-            // First, evaluate higher distance in the pair
-            int higherDistance = outerdistance + 1;
-            List<WorldPoint> higherDistanceTiles = sortedWhitelist.stream()
-                    .filter(tile -> tile.distanceTo(Players.getLocal()) == higherDistance && API.getClosestAttackDistance(totemNPC, tile, client) <= 8)
-                    .collect(Collectors.toList());
+        // First, evaluate higher distance in the pair
+        int higherDistance =  2;
+        List<WorldPoint> higherInRangeDistanceTiles = tmpInRangeSortedWhitelist.stream()
+                .filter(tile -> tile.distanceTo(Players.getLocal()) == higherDistance)
+                .collect(Collectors.toList());
 
-            if (!higherDistanceTiles.isEmpty()) {
-                higherDistanceTiles.sort(Comparator.comparingDouble(tile -> API.getPythagoreanDistance(tile, centerTotem.getWorldLocation())));
-                return higherDistanceTiles;
-            }
+        if (!higherInRangeDistanceTiles.isEmpty()) {
+            higherInRangeDistanceTiles.sort(Comparator.comparingDouble(tile -> API.getPythagoreanDistance(tile, centerTotem.getWorldLocation())));
+            return higherInRangeDistanceTiles;
+        }
+        List<WorldPoint> higherDistanceTiles = tmpSortedWhitelist.stream()
+                .filter(tile -> tile.distanceTo(Players.getLocal()) == higherDistance)
+                .collect(Collectors.toList());
+        if (!higherDistanceTiles.isEmpty()) {
+            higherDistanceTiles.sort(Comparator.comparingDouble(tile -> API.getPythagoreanDistance(tile, centerTotem.getWorldLocation())));
+            return higherDistanceTiles;
+        }
+        // If no tiles found for higher distance, evaluate lower distance in the pair
+        int finalOuterdistance = 1;
+        List<WorldPoint> lowerInRangeDistanceTiles = tmpInRangeSortedWhitelist.stream()
+                .filter(tile -> tile.distanceTo(Players.getLocal()) == finalOuterdistance)
+                .collect(Collectors.toList());
 
-            // If no tiles found for higher distance, evaluate lower distance in the pair
-            int finalOuterdistance = outerdistance;
-            List<WorldPoint> lowerDistanceTiles = sortedWhitelist.stream()
-                    .filter(tile -> tile.distanceTo(Players.getLocal()) == finalOuterdistance  && API.getClosestAttackDistance(totemNPC, tile, client) <= 8)
-                    .collect(Collectors.toList());
-
-            if (!lowerDistanceTiles.isEmpty()) {
-                lowerDistanceTiles.sort(Comparator.comparingDouble(tile -> API.getPythagoreanDistance(tile, centerTotem.getWorldLocation())));
-                return lowerDistanceTiles;
-            }
+        if (!lowerInRangeDistanceTiles.isEmpty()) {
+            lowerInRangeDistanceTiles.sort(Comparator.comparingDouble(tile -> API.getPythagoreanDistance(tile, centerTotem.getWorldLocation())));
+            return lowerInRangeDistanceTiles;
         }
 
-        return null; // signal to stay put lol, list should never be null except for when mage totems are on opposite quadrant of safe quandrant of flower power active AND shadows active. Range too small for mage attack.
+        List<WorldPoint> lowerDistanceTiles = tmpSortedWhitelist.stream()
+                .filter(tile -> tile.distanceTo(Players.getLocal()) == higherDistance)
+                .collect(Collectors.toList());
+        if (!lowerDistanceTiles.isEmpty()) {
+            lowerDistanceTiles.sort(Comparator.comparingDouble(tile -> API.getPythagoreanDistance(tile, centerTotem.getWorldLocation())));
+            return lowerDistanceTiles;
+        }
+        return tmpSortedWhitelist;
     }
 
     public void getWhitelistedTiles(Set<WorldPoint> areaToModify) {
@@ -1979,7 +2185,7 @@ public class NightmarePlugin extends Script {
 
     public NPC getClosestTotem() {
         return totems.values().stream()
-                .filter(t -> t.getCurrentPhase().isActive() && (t.getCurrentPhase().getColor() == Color.ORANGE || t.getCurrentPhase().getColor() == Color.RED))
+                .filter(t -> t.getNpc() != null && t.getNpc().getName() != null && t.getCurrentPhase().isActive() && (t.getCurrentPhase().getColor() == Color.ORANGE || t.getCurrentPhase().getColor() == Color.RED))
                 .min(Comparator.comparingDouble(t -> calculateAngle(Players.getLocal().getWorldLocation(), t.getNpc().getWorldLocation())))
                 .map(MemorizedTotem::getNpc)
                 .orElse(null);
@@ -2035,10 +2241,12 @@ public class NightmarePlugin extends Script {
         getBlacklistedTiles(blacklist, false);
         getBlacklistedTiles(blacklistWalk, true);
         getWhitelistedTiles(whitelist);
+        whitelistWalk.clear();
+        whitelistWalk.addAll(whitelist);
 
         // filter blacklist from whitelist to remove duplicates
         whitelist.removeAll(blacklist);
-
+        whitelistWalk.removeAll(blacklistWalk);
     }
 
     public void getBlacklistedTiles(Set<WorldPoint> areaToModify, boolean walkShadowTiles) {
@@ -2055,11 +2263,13 @@ public class NightmarePlugin extends Script {
                 }
             }
         }
-
-        if (!shadowsPoints.isEmpty()) {
-            // Add Nightmare tiles except for corner tiles when shadows present
+        if (walkShadowTiles && (nm.getAnimation() == NIGHTMARE_PRE_SHADOWS || nm.getAnimation() == NIGHTMARE_DURING_SHADOWS)) {
+            // Add Nightmare tiles except for corner tiles when she spawning some
             areaToModify.addAll(findNonCornerTiles(nm.getWorldArea()));
-
+        }
+        if (!shadowsPoints.isEmpty()) {
+            // Add Nightmare tiles except for corner tiles when shadows exactly present
+            areaToModify.addAll(findNonCornerTiles(nm.getWorldArea()));
             // Add Shadow tiles
             log.debug("Have some shadow tiles to blacklist, global shadow tick = " + shadowsTicks);
             for (Map.Entry<WorldPoint, Integer> shadowPoint : shadowsPoints.entrySet()) {
@@ -2082,7 +2292,7 @@ public class NightmarePlugin extends Script {
     public void killSleepwalker() {
         NPC closestSleepwalker = sleepwalkers.stream()
                 .filter(npc -> npc.hasAction("Attack"))
-                .min(Comparator.comparingInt(npc -> npc.distanceTo(Players.getLocal())))
+                .max(Comparator.comparingInt(npc -> npc.distanceTo(Players.getLocal())))
                 .orElse(null);
         if (closestSleepwalker == null) {
             Log.log("null NPC found of tracked SLEEPWALKERS with action ATTACK");
@@ -2104,7 +2314,7 @@ public class NightmarePlugin extends Script {
 
     public void killHusks(List<Integer> swapGear) {
         NPC closestHusk = husks.stream()
-                .max(Comparator.comparingInt(npc -> npc.getId()))
+                .min(Comparator.comparingInt(npc -> npc.getId()))
                 .orElse(null);
         if (closestHusk == null) {
             Log.log("null NPC found of tracked HUSKS");
@@ -2124,26 +2334,21 @@ public class NightmarePlugin extends Script {
         attackedHusk = true;
     }
 
-    public void killParasite(List<Integer> swapGear) {
-        NPC closestParasite = parasites.stream()
-                .min(Comparator.comparingInt(npc -> npc.distanceTo(Players.getLocal())))
-                .orElse(null);
-        if (closestParasite == null) {
-            Log.log("null NPC found of tracked PARASITES");
-            return;
-        }
+    public int killParasite(NPC closestParasite, List<Integer> swapGear) {
+
 
         prayMeleeOffensive();
-        if (!Switching.equip(swapGear)) {
-            return;
-        }
 
-        if (ourCurrentTarget != null && ourCurrentTarget.getTag() == closestParasite.getTag()) {
-            return;
+        if (closestParasite.isMoving() && (!flowers.isEmpty() || !shadowsPoints.isEmpty() || !sporesWorld.isEmpty())) {
+            Log.log("Ignoring MOVING parasite when spores/shadows/flowers! Fucker");
+            return API.returnTick();
         }
-
-        closestParasite.interact("Attack");
-        Log.log("interacted attack on parasite");
+        int result = safelyWalkToInteractAttackMeleeNPC(closestParasite, swapGear, false, 0, 0, null);
+        if (result == -1) {
+            Log.log("No safetiles found around parasite :o");
+            return API.returnTick();
+        }
+        return result;
     }
 
     @Subscribe
